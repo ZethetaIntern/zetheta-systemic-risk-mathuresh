@@ -1,0 +1,98 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# =============================
+# SETTINGS
+# =============================
+stock = "RELIANCE.NS"
+start_date = "2023-01-01"
+end_date = "2024-01-01"
+
+order_size = 10000
+participation_rate = 0.1
+impact_factor = 0.2
+
+# =============================
+# DOWNLOAD DATA
+# =============================
+data = yf.download(
+    stock,
+    start=start_date,
+    end=end_date,
+    auto_adjust=True,
+    group_by="ticker"   # IMPORTANT FIX
+)
+
+# If MultiIndex exists → select stock level
+if isinstance(data.columns, pd.MultiIndex):
+    data = data[stock]
+
+# Now keep required columns
+data = data[["Close", "Volume"]].copy()
+
+# Rename
+data.rename(columns={"Close": "Price"}, inplace=True)
+
+# Convert to float
+data["Price"] = data["Price"].astype(float)
+data["Volume"] = data["Volume"].astype(float)
+
+data.dropna(inplace=True)
+
+# =============================
+# VWAP CALCULATION (SAFE WAY)
+# =============================
+price = data["Price"].values
+volume = data["Volume"].values
+
+price_volume = price * volume
+
+data["Price_Volume"] = price_volume
+data["Cumulative_PV"] = np.cumsum(price_volume)
+data["Cumulative_Volume"] = np.cumsum(volume)
+data["VWAP"] = data["Cumulative_PV"] / data["Cumulative_Volume"]
+
+# =============================
+# EXECUTION STRATEGY
+# =============================
+market_price = float(price[0])
+
+shares_per_day = order_size / len(data)
+shares_executed = np.minimum(shares_per_day, volume * participation_rate)
+
+vwap_execution_cost = np.sum(shares_executed * price)
+total_shares = np.sum(shares_executed)
+
+vwap_avg_price = float(vwap_execution_cost / total_shares)
+
+# =============================
+# MARKET IMPACT
+# =============================
+avg_daily_volume = float(np.mean(volume))
+impact = impact_factor * np.sqrt(order_size / avg_daily_volume)
+
+impacted_price = float(vwap_avg_price * (1 + impact))
+
+# =============================
+# RESULTS
+# =============================
+actual_vwap = float(data["VWAP"].iloc[-1])
+
+print("\n========= RESULTS =========")
+print(f"Final VWAP: {actual_vwap:.2f}")
+print(f"Market Price: {market_price:.2f}")
+print(f"VWAP Execution Price: {vwap_avg_price:.2f}")
+print(f"With Market Impact: {impacted_price:.2f}")
+
+# =============================
+# PLOT
+# =============================
+plt.figure(figsize=(12,6))
+plt.plot(data.index, data["Price"], label="Market Price")
+plt.plot(data.index, data["VWAP"], linestyle="--", label="VWAP")
+plt.title(f"{stock} Price vs VWAP")
+plt.legend()
+plt.grid(True)
+plt.show()
